@@ -312,7 +312,7 @@ ${previewContent}
             </Link>
             <div>
               <h1 className="font-semibold">{site.name}</h1>
-              <p className="text-xs text-muted-foreground font-mono">{site.subdomain}.hostflow.app</p>
+              <p className="text-xs text-muted-foreground font-mono">htmlhoster.lovable.app/{site.subdomain}</p>
             </div>
           </div>
 
