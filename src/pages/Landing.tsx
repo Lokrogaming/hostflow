@@ -75,7 +75,7 @@ export default function Landing() {
                   </div>
                   <div className="flex-1 flex justify-center">
                     <div className="px-4 py-1 rounded-md bg-background/50 text-xs text-muted-foreground font-mono">
-                      yoursite.hostflow.app
+                      hostflow.lovable.app/yoursite
                     </div>
                   </div>
                 </div>
