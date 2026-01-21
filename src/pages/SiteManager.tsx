@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/lib/auth';
@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { 
   Globe, ArrowLeft, Plus, File, Folder, Trash2, Edit, Save, 
   ExternalLink, Github, Sparkles, Loader2, FileCode, FileText,
-  Image, MoreVertical, Upload, X, Check
+  Image, MoreVertical, Upload, X, Check, Eye, Code, Columns
 } from 'lucide-react';
 import {
   Dialog,
@@ -24,6 +24,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from '@/components/ui/toggle-group';
 import { toast } from 'sonner';
 
 interface Site {
@@ -62,6 +66,42 @@ export default function SiteManager() {
   const [saving, setSaving] = useState(false);
   const [editingSite, setEditingSite] = useState(false);
   const [siteSettings, setSiteSettings] = useState({ name: '', description: '' });
+  const [viewMode, setViewMode] = useState<'code' | 'preview' | 'split'>('split');
+
+  // Debounced preview content for performance
+  const [previewContent, setPreviewContent] = useState('');
+  
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setPreviewContent(editingContent);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [editingContent]);
+
+  // Generate preview HTML with proper base styling
+  const previewHtml = useMemo(() => {
+    if (!previewContent) return '';
+    
+    // If it's already a full HTML document, use it as-is
+    if (previewContent.toLowerCase().includes('<!doctype') || previewContent.toLowerCase().includes('<html')) {
+      return previewContent;
+    }
+    
+    // Otherwise, wrap it in a basic HTML structure
+    return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; }
+  </style>
+</head>
+<body>
+${previewContent}
+</body>
+</html>`;
+  }, [previewContent]);
 
   useEffect(() => {
     fetchSite();
@@ -358,7 +398,7 @@ export default function SiteManager() {
         </aside>
 
         {/* Editor area */}
-        <main className="flex-1 flex flex-col">
+        <main className="flex-1 flex flex-col min-w-0">
           {selectedFile ? (
             <>
               <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 bg-card/30">
@@ -366,18 +406,55 @@ export default function SiteManager() {
                   {getFileIcon(selectedFile.file_type)}
                   <span className="font-mono text-sm">{selectedFile.name}</span>
                 </div>
-                <Button onClick={saveFile} disabled={saving} size="sm">
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  Save
-                </Button>
+                <div className="flex items-center gap-2">
+                  <ToggleGroup type="single" value={viewMode} onValueChange={(v) => v && setViewMode(v as typeof viewMode)}>
+                    <ToggleGroupItem value="code" aria-label="Code only" className="h-8 px-3">
+                      <Code className="w-4 h-4" />
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="split" aria-label="Split view" className="h-8 px-3">
+                      <Columns className="w-4 h-4" />
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="preview" aria-label="Preview only" className="h-8 px-3">
+                      <Eye className="w-4 h-4" />
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                  <Button onClick={saveFile} disabled={saving} size="sm">
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    Save
+                  </Button>
+                </div>
               </div>
-              <div className="flex-1 relative">
-                <Textarea
-                  value={editingContent}
-                  onChange={(e) => setEditingContent(e.target.value)}
-                  className="absolute inset-0 resize-none rounded-none border-0 code-editor bg-background font-mono text-sm p-4 focus-visible:ring-0"
-                  placeholder="Start typing your code..."
-                />
+              <div className="flex-1 flex min-h-0">
+                {/* Code Editor */}
+                {(viewMode === 'code' || viewMode === 'split') && (
+                  <div className={`flex-1 relative ${viewMode === 'split' ? 'border-r border-border/50' : ''}`}>
+                    <Textarea
+                      value={editingContent}
+                      onChange={(e) => setEditingContent(e.target.value)}
+                      className="absolute inset-0 resize-none rounded-none border-0 code-editor bg-background font-mono text-sm p-4 focus-visible:ring-0"
+                      placeholder="Start typing your code..."
+                    />
+                  </div>
+                )}
+                {/* Live Preview */}
+                {(viewMode === 'preview' || viewMode === 'split') && (
+                  <div className="flex-1 flex flex-col">
+                    <div className="px-4 py-2 border-b border-border/50 bg-card/50 flex items-center gap-2">
+                      <Eye className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-xs text-muted-foreground font-medium">Live Preview</span>
+                      <div className="flex-1" />
+                      <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                    </div>
+                    <div className="flex-1 bg-white">
+                      <iframe
+                        srcDoc={previewHtml}
+                        className="w-full h-full border-0"
+                        title="Live Preview"
+                        sandbox="allow-scripts allow-same-origin"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </>
           ) : (
