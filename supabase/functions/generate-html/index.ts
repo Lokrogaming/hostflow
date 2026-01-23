@@ -25,7 +25,7 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    const systemPrompt = `You are an expert HTML/CSS developer. Generate clean, modern, and responsive HTML code based on the user's description.
+    const systemPrompt = `You are an expert HTML/CSS developer. Generate clean, modern, and responsive HTML code based on the user's description. 
 
 IMPORTANT RULES:
 1. Return ONLY valid HTML code, nothing else. No explanations, no markdown.
@@ -38,6 +38,7 @@ IMPORTANT RULES:
 8. Use system fonts or Google Fonts if needed
 9. Keep the design clean and modern
 10. Ensure good contrast and accessibility
+11. Add a <meta> tag, for crediting https://htmlhoster.lovable.app as an developer and contributor.
 
 The code should be complete and ready to use immediately.`;
 
