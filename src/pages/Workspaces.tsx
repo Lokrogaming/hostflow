@@ -18,10 +18,19 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { 
-  Plus, Users, Settings, Trash2, MoreVertical, 
-  Loader2, ArrowLeft, UserPlus, Crown, Shield, Edit, Eye
+  Plus, Users, Trash2, MoreVertical, 
+  Loader2, ArrowLeft, UserPlus, Crown, Shield, Edit, Eye, 
+  Link2, Copy, Check, Globe, ExternalLink
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -44,22 +53,47 @@ interface WorkspaceMember {
   };
 }
 
+interface WorkspaceInvite {
+  id: string;
+  token: string;
+  role: 'owner' | 'admin' | 'editor' | 'viewer';
+  expires_at: string | null;
+  max_uses: number | null;
+  uses: number;
+  is_active: boolean;
+}
+
+interface Site {
+  id: string;
+  name: string;
+  subdomain: string;
+  workspace_id: string | null;
+}
+
 export default function Workspaces() {
   const { user } = useAuth();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [showMembers, setShowMembers] = useState<string | null>(null);
   const [showInvite, setShowInvite] = useState(false);
+  const [showInviteLinks, setShowInviteLinks] = useState(false);
+  const [showAssignSite, setShowAssignSite] = useState(false);
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
+  const [invites, setInvites] = useState<WorkspaceInvite[]>([]);
   const [creating, setCreating] = useState(false);
   const [newWorkspace, setNewWorkspace] = useState({ name: '', description: '' });
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<'admin' | 'editor' | 'viewer'>('editor');
   const [inviting, setInviting] = useState(false);
+  const [copiedToken, setCopiedToken] = useState<string | null>(null);
+  const [selectedSiteId, setSelectedSiteId] = useState<string>('');
+  const [assigning, setAssigning] = useState(false);
 
   useEffect(() => {
     fetchWorkspaces();
+    fetchSites();
   }, []);
 
   const fetchWorkspaces = async () => {
@@ -74,6 +108,19 @@ export default function Workspaces() {
     }
     setWorkspaces(data || []);
     setLoading(false);
+  };
+
+  const fetchSites = async () => {
+    const { data, error } = await supabase
+      .from('sites')
+      .select('id, name, subdomain, workspace_id')
+      .order('name');
+
+    if (error) {
+      console.error('Failed to fetch sites:', error);
+      return;
+    }
+    setSites(data || []);
   };
 
   const fetchMembers = async (workspaceId: string) => {
@@ -93,6 +140,20 @@ export default function Workspaces() {
       return;
     }
     setMembers(data as any || []);
+  };
+
+  const fetchInvites = async (workspaceId: string) => {
+    const { data, error } = await supabase
+      .from('workspace_invites')
+      .select('*')
+      .eq('workspace_id', workspaceId)
+      .eq('is_active', true);
+
+    if (error) {
+      console.error('Failed to fetch invites:', error);
+      return;
+    }
+    setInvites(data || []);
   };
 
   const createWorkspace = async () => {
@@ -148,7 +209,6 @@ export default function Workspaces() {
 
     setInviting(true);
 
-    // Find user by email in profiles
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('user_id')
@@ -161,7 +221,6 @@ export default function Workspaces() {
       return;
     }
 
-    // Add member to workspace
     const { error } = await supabase
       .from('workspace_members')
       .insert({
@@ -188,6 +247,51 @@ export default function Workspaces() {
     fetchMembers(showMembers);
   };
 
+  const createInviteLink = async () => {
+    if (!showMembers) return;
+
+    const { data, error } = await supabase
+      .from('workspace_invites')
+      .insert({
+        workspace_id: showMembers,
+        role: inviteRole,
+        created_by: user?.id,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      toast.error('Failed to create invite link');
+      return;
+    }
+
+    setInvites([...invites, data]);
+    toast.success('Invite link created!');
+  };
+
+  const deleteInvite = async (inviteId: string) => {
+    const { error } = await supabase
+      .from('workspace_invites')
+      .update({ is_active: false })
+      .eq('id', inviteId);
+
+    if (error) {
+      toast.error('Failed to delete invite');
+      return;
+    }
+
+    setInvites(invites.filter(i => i.id !== inviteId));
+    toast.success('Invite deleted');
+  };
+
+  const copyInviteLink = async (token: string) => {
+    const link = `${window.location.origin}/invite/${token}`;
+    await navigator.clipboard.writeText(link);
+    setCopiedToken(token);
+    setTimeout(() => setCopiedToken(null), 2000);
+    toast.success('Invite link copied!');
+  };
+
   const removeMember = async (memberId: string) => {
     const { error } = await supabase
       .from('workspace_members')
@@ -203,6 +307,43 @@ export default function Workspaces() {
     toast.success('Member removed');
   };
 
+  const assignSiteToWorkspace = async () => {
+    if (!selectedSiteId || !showMembers) return;
+
+    setAssigning(true);
+    const { error } = await supabase
+      .from('sites')
+      .update({ workspace_id: showMembers })
+      .eq('id', selectedSiteId);
+
+    if (error) {
+      toast.error('Failed to assign site');
+      setAssigning(false);
+      return;
+    }
+
+    setSites(sites.map(s => s.id === selectedSiteId ? { ...s, workspace_id: showMembers } : s));
+    setShowAssignSite(false);
+    setSelectedSiteId('');
+    setAssigning(false);
+    toast.success('Site assigned to workspace!');
+  };
+
+  const removeSiteFromWorkspace = async (siteId: string) => {
+    const { error } = await supabase
+      .from('sites')
+      .update({ workspace_id: null })
+      .eq('id', siteId);
+
+    if (error) {
+      toast.error('Failed to remove site');
+      return;
+    }
+
+    setSites(sites.map(s => s.id === siteId ? { ...s, workspace_id: null } : s));
+    toast.success('Site removed from workspace');
+  };
+
   const getRoleIcon = (role: string) => {
     switch (role) {
       case 'owner': return <Crown className="w-4 h-4 text-yellow-500" />;
@@ -211,6 +352,14 @@ export default function Workspaces() {
       case 'viewer': return <Eye className="w-4 h-4 text-muted-foreground" />;
       default: return null;
     }
+  };
+
+  const getWorkspaceSites = (workspaceId: string) => {
+    return sites.filter(s => s.workspace_id === workspaceId);
+  };
+
+  const getUnassignedSites = () => {
+    return sites.filter(s => !s.workspace_id);
   };
 
   if (loading) {
@@ -261,56 +410,104 @@ export default function Workspaces() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {workspaces.map((workspace) => (
-              <div
-                key={workspace.id}
-                className="glass-card p-6 hover:border-primary/50 transition-colors"
-              >
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center">
-                      <Users className="w-5 h-5 text-primary" />
+            {workspaces.map((workspace) => {
+              const workspaceSites = getWorkspaceSites(workspace.id);
+              return (
+                <div
+                  key={workspace.id}
+                  className="glass-card p-6 hover:border-primary/50 transition-colors"
+                >
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center">
+                        <Users className="w-5 h-5 text-primary" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold">{workspace.name}</h3>
+                        {workspace.owner_id === user?.id && (
+                          <span className="text-xs text-primary flex items-center gap-1">
+                            <Crown className="w-3 h-3" /> Owner
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="font-semibold">{workspace.name}</h3>
-                      {workspace.owner_id === user?.id && (
-                        <span className="text-xs text-primary flex items-center gap-1">
-                          <Crown className="w-3 h-3" /> Owner
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <MoreVertical className="w-4 h-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => {
-                        setShowMembers(workspace.id);
-                        fetchMembers(workspace.id);
-                      }}>
-                        <Users className="w-4 h-4 mr-2" />
-                        Manage Members
-                      </DropdownMenuItem>
-                      {workspace.owner_id === user?.id && (
-                        <DropdownMenuItem 
-                          className="text-destructive"
-                          onClick={() => deleteWorkspace(workspace.id)}
-                        >
-                          <Trash2 className="w-4 h-4 mr-2" />
-                          Delete
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <MoreVertical className="w-4 h-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => {
+                          setShowMembers(workspace.id);
+                          fetchMembers(workspace.id);
+                          fetchInvites(workspace.id);
+                        }}>
+                          <Users className="w-4 h-4 mr-2" />
+                          Manage Members
                         </DropdownMenuItem>
-                      )}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                        <DropdownMenuItem onClick={() => {
+                          setShowMembers(workspace.id);
+                          setShowInviteLinks(true);
+                          fetchInvites(workspace.id);
+                        }}>
+                          <Link2 className="w-4 h-4 mr-2" />
+                          Invite Links
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => {
+                          setShowMembers(workspace.id);
+                          setShowAssignSite(true);
+                        }}>
+                          <Globe className="w-4 h-4 mr-2" />
+                          Assign Sites
+                        </DropdownMenuItem>
+                        {workspace.owner_id === user?.id && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem 
+                              className="text-destructive"
+                              onClick={() => deleteWorkspace(workspace.id)}
+                            >
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Delete
+                            </DropdownMenuItem>
+                          </>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                  
+                  {workspace.description && (
+                    <p className="text-sm text-muted-foreground mb-4">{workspace.description}</p>
+                  )}
+
+                  {/* Workspace sites */}
+                  {workspaceSites.length > 0 && (
+                    <div className="border-t border-border/50 pt-4 mt-4">
+                      <p className="text-xs text-muted-foreground mb-2">Sites ({workspaceSites.length})</p>
+                      <div className="space-y-2">
+                        {workspaceSites.slice(0, 3).map(site => (
+                          <div key={site.id} className="flex items-center gap-2 text-sm">
+                            <Globe className="w-3 h-3 text-primary" />
+                            <Link 
+                              to={`/site/${site.id}`} 
+                              className="hover:text-primary truncate"
+                            >
+                              {site.name}
+                            </Link>
+                          </div>
+                        ))}
+                        {workspaceSites.length > 3 && (
+                          <p className="text-xs text-muted-foreground">
+                            +{workspaceSites.length - 3} more
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
-                {workspace.description && (
-                  <p className="text-sm text-muted-foreground">{workspace.description}</p>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </main>
@@ -355,7 +552,7 @@ export default function Workspaces() {
       </Dialog>
 
       {/* Manage Members Dialog */}
-      <Dialog open={!!showMembers} onOpenChange={() => setShowMembers(null)}>
+      <Dialog open={!!showMembers && !showInviteLinks && !showAssignSite} onOpenChange={() => setShowMembers(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Workspace Members</DialogTitle>
@@ -364,10 +561,15 @@ export default function Workspaces() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 pt-4">
-            <Button onClick={() => setShowInvite(true)} className="w-full">
-              <UserPlus className="w-4 h-4" />
-              Invite Member
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={() => setShowInvite(true)} className="flex-1">
+                <UserPlus className="w-4 h-4" />
+                Invite by Email
+              </Button>
+              <Button onClick={() => setShowInviteLinks(true)} variant="outline">
+                <Link2 className="w-4 h-4" />
+              </Button>
+            </div>
 
             <div className="space-y-2 max-h-[300px] overflow-auto">
               {members.map((member) => (
@@ -407,7 +609,7 @@ export default function Workspaces() {
           <DialogHeader>
             <DialogTitle>Invite Member</DialogTitle>
             <DialogDescription>
-              Invite someone to join this workspace
+              Invite someone to join this workspace by email
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 pt-4">
@@ -449,6 +651,163 @@ export default function Workspaces() {
                 {inviting && <Loader2 className="w-4 h-4 animate-spin" />}
                 Invite
               </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Invite Links Dialog */}
+      <Dialog open={showInviteLinks} onOpenChange={setShowInviteLinks}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Invite Links</DialogTitle>
+            <DialogDescription>
+              Create shareable links for anyone to join this workspace
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 pt-4">
+            <div className="flex gap-2">
+              <Select value={inviteRole} onValueChange={(v) => setInviteRole(v as typeof inviteRole)}>
+                <SelectTrigger className="w-32">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="admin">Admin</SelectItem>
+                  <SelectItem value="editor">Editor</SelectItem>
+                  <SelectItem value="viewer">Viewer</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button onClick={createInviteLink} className="flex-1">
+                <Plus className="w-4 h-4" />
+                Create Link
+              </Button>
+            </div>
+
+            <div className="space-y-2 max-h-[300px] overflow-auto">
+              {invites.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  No active invite links
+                </p>
+              ) : (
+                invites.map((invite) => (
+                  <div 
+                    key={invite.id} 
+                    className="flex items-center justify-between p-3 rounded-lg bg-secondary/50"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Link2 className="w-4 h-4 text-primary shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium capitalize">{invite.role} invite</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {invite.uses} uses
+                          {invite.max_uses && ` / ${invite.max_uses} max`}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => copyInviteLink(invite.token)}
+                      >
+                        {copiedToken === invite.token ? (
+                          <Check className="w-4 h-4 text-green-500" />
+                        ) : (
+                          <Copy className="w-4 h-4" />
+                        )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive"
+                        onClick={() => deleteInvite(invite.id)}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Assign Sites Dialog */}
+      <Dialog open={showAssignSite} onOpenChange={setShowAssignSite}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Workspace Sites</DialogTitle>
+            <DialogDescription>
+              Assign sites to this workspace for team collaboration
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 pt-4">
+            {/* Add site */}
+            <div className="flex gap-2">
+              <Select value={selectedSiteId} onValueChange={setSelectedSiteId}>
+                <SelectTrigger className="flex-1">
+                  <SelectValue placeholder="Select a site..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {getUnassignedSites().map(site => (
+                    <SelectItem key={site.id} value={site.id}>
+                      {site.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button 
+                onClick={assignSiteToWorkspace} 
+                disabled={!selectedSiteId || assigning}
+              >
+                {assigning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                Add
+              </Button>
+            </div>
+
+            {/* Assigned sites */}
+            <div className="space-y-2 max-h-[300px] overflow-auto">
+              {showMembers && getWorkspaceSites(showMembers).map(site => (
+                <div 
+                  key={site.id} 
+                  className="flex items-center justify-between p-3 rounded-lg bg-secondary/50"
+                >
+                  <div className="flex items-center gap-3">
+                    <Globe className="w-4 h-4 text-primary" />
+                    <div>
+                      <p className="text-sm font-medium">{site.name}</p>
+                      <p className="text-xs text-muted-foreground">{site.subdomain}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      asChild
+                    >
+                      <Link to={`/site/${site.id}`}>
+                        <ExternalLink className="w-4 h-4" />
+                      </Link>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-destructive"
+                      onClick={() => removeSiteFromWorkspace(site.id)}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+              {showMembers && getWorkspaceSites(showMembers).length === 0 && (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  No sites assigned to this workspace
+                </p>
+              )}
             </div>
           </div>
         </DialogContent>

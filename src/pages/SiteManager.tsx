@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/lib/auth';
@@ -6,10 +6,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import CodeEditor from '@/components/CodeEditor';
+import LiveCursors, { ActiveUsers } from '@/components/LiveCursors';
+import { useRealtimeCollaboration } from '@/hooks/useRealtimeCollaboration';
 import { 
   Globe, ArrowLeft, Plus, File, Folder, Trash2, Save, 
   ExternalLink, Github, Sparkles, Loader2, FileCode, FileText,
-  MoreVertical, X, Eye, Code, Columns, FolderPlus, ChevronRight, ChevronDown
+  MoreVertical, X, Eye, Code, Columns, FolderPlus, ChevronRight, ChevronDown, Download
 } from 'lucide-react';
 import {
   Dialog,
@@ -87,6 +89,25 @@ export default function SiteManager() {
   const [viewMode, setViewMode] = useState<'code' | 'preview' | 'split'>('split');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['/']));
   const [isOwner, setIsOwner] = useState(false);
+
+  // Ref for cursor tracking
+  const editorContainerRef = useRef<HTMLDivElement>(null);
+
+  // Real-time collaboration
+  const { cursors, activeUsers, broadcastCursor, myColor } = useRealtimeCollaboration(
+    id || '',
+    selectedFile?.id
+  );
+
+  // Track mouse movement for cursor sharing
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!editorContainerRef.current) return;
+    const rect = editorContainerRef.current.getBoundingClientRect();
+    broadcastCursor({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    });
+  }, [broadcastCursor]);
 
   // Debounced preview content for performance
   const [previewContent, setPreviewContent] = useState('');
@@ -498,20 +519,68 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     setImporting(true);
-    const { error } = await supabase
-      .from('sites')
-      .update({ github_url: githubUrl })
-      .eq('id', id);
+    
+    try {
+      // Call the GitHub import edge function
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/github-import`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+        },
+        body: JSON.stringify({ github_url: githubUrl }),
+      });
 
-    if (error) {
-      toast.error('Failed to link GitHub');
-    } else {
-      toast.success('GitHub repository linked!');
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        toast.error(result.error || 'Failed to import from GitHub');
+        setImporting(false);
+        return;
+      }
+
+      // Create files in the database
+      const importedFiles = result.files as Array<{
+        name: string;
+        path: string;
+        content: string;
+        file_type: string;
+        size_bytes: number;
+      }>;
+
+      let successCount = 0;
+      for (const file of importedFiles) {
+        const { error } = await supabase
+          .from('files')
+          .insert({
+            site_id: id,
+            name: file.name,
+            path: file.path,
+            content: file.content,
+            file_type: file.file_type,
+            size_bytes: file.size_bytes,
+          });
+
+        if (!error) successCount++;
+      }
+
+      // Update site with GitHub URL
+      await supabase
+        .from('sites')
+        .update({ github_url: githubUrl })
+        .eq('id', id);
+
+      toast.success(`Imported ${successCount} files from GitHub!`);
       setSite(site ? { ...site, github_url: githubUrl } : null);
       setShowGithub(false);
       setGithubUrl('');
+      await fetchFiles();
+    } catch (error: any) {
+      toast.error('Failed to import from GitHub');
+      console.error('GitHub import error:', error);
+    } finally {
+      setImporting(false);
     }
-    setImporting(false);
   };
 
   const getFileIcon = (type: string) => {
@@ -687,7 +756,17 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            {/* Active collaborators */}
+            {activeUsers.length > 0 && (
+              <div className="flex items-center gap-2 mr-2">
+                <ActiveUsers users={activeUsers} />
+                <span className="text-xs text-muted-foreground">
+                  {activeUsers.length} online
+                </span>
+              </div>
+            )}
+            
             {site.is_published && (
               <Button variant="outline" size="sm" asChild>
                 <a href={`/sites/${site.subdomain}`} target="_blank" rel="noopener noreferrer">
@@ -777,7 +856,18 @@ document.addEventListener('DOMContentLoaded', () => {
                   )}
                 </div>
               </div>
-              <div className="flex-1 flex min-h-0">
+              <div 
+                className="flex-1 flex min-h-0 relative"
+                ref={editorContainerRef}
+                onMouseMove={handleMouseMove}
+              >
+                {/* Live cursors overlay */}
+                <LiveCursors 
+                  cursors={cursors} 
+                  containerRef={editorContainerRef}
+                  currentFileId={selectedFile?.id}
+                />
+                
                 {/* Code Editor */}
                 {(viewMode === 'code' || viewMode === 'split') && (
                   <div className={`flex-1 relative ${viewMode === 'split' ? 'border-r border-border/50' : ''}`}>
