@@ -10,6 +10,7 @@ import Dashboard from "./pages/Dashboard";
 import SiteManager from "./pages/SiteManager";
 import AIEditor from "./pages/AIEditor";
 import Workspaces from "./pages/Workspaces";
+import JoinWorkspace from "./pages/JoinWorkspace";
 import PublicSite from "./pages/PublicSite";
 import NotFound from "./pages/NotFound";
 
@@ -66,6 +67,8 @@ const App = () => (
             <Route path="/workspaces" element={<ProtectedRoute><Workspaces /></ProtectedRoute>} />
             <Route path="/site/:id" element={<ProtectedRoute><SiteManager /></ProtectedRoute>} />
             <Route path="/site/:id/editor" element={<ProtectedRoute><AIEditor /></ProtectedRoute>} />
+            {/* Invite link route */}
+            <Route path="/invite/:token" element={<JoinWorkspace />} />
             {/* Public site routes */}
             <Route path="/sites/:subdomain" element={<PublicSite />} />
             <Route path="/sites/:subdomain/*" element={<PublicSite />} />

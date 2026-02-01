@@ -2,3 +2,6 @@ project_id = "ktzssjzeesdyflzjgqhw"
 
 [functions.generate-html]
 verify_jwt = false
+
+[functions.github-import]
+verify_jwt = false
