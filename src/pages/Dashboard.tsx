@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { 
   Globe, Plus, Search, ExternalLink, Settings, LogOut, 
-  MoreVertical, Trash2, Edit, Github, Sparkles, Loader2, FolderOpen
+  MoreVertical, Trash2, Edit, Github, Sparkles, Loader2, FolderOpen, Users
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -137,6 +137,12 @@ export default function Dashboard() {
 
           <div className="flex items-center gap-4">
             <span className="text-sm text-muted-foreground hidden sm:block">{user?.email}</span>
+            <Button variant="outline" size="sm" asChild>
+              <Link to="/workspaces">
+                <Users className="w-4 h-4" />
+                Workspaces
+              </Link>
+            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon">
@@ -286,7 +292,7 @@ function SiteCard({ site, onDelete }: { site: Site; onDelete: () => void }) {
       <Link to={`/site/${site.id}`}>
         <h3 className="font-semibold mb-1 hover:text-primary transition-colors">{site.name}</h3>
       </Link>
-      <p className="text-sm text-muted-foreground mb-4 font-mono">{site.subdomain}.hostflow.app</p>
+      <p className="text-sm text-muted-foreground mb-4 font-mono">htmlhoster.lovable.app/sites/{site.subdomain}</p>
 
       <div className="flex items-center gap-2">
         <span className={`text-xs px-2 py-1 rounded-full ${site.is_published ? 'bg-success/20 text-success' : 'bg-muted text-muted-foreground'}`}>

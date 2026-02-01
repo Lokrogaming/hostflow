@@ -9,6 +9,8 @@ import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
 import SiteManager from "./pages/SiteManager";
 import AIEditor from "./pages/AIEditor";
+import Workspaces from "./pages/Workspaces";
+import PublicSite from "./pages/PublicSite";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -61,8 +63,12 @@ const App = () => (
             <Route path="/login" element={<PublicRoute><Auth /></PublicRoute>} />
             <Route path="/signup" element={<PublicRoute><Auth /></PublicRoute>} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/workspaces" element={<ProtectedRoute><Workspaces /></ProtectedRoute>} />
             <Route path="/site/:id" element={<ProtectedRoute><SiteManager /></ProtectedRoute>} />
             <Route path="/site/:id/editor" element={<ProtectedRoute><AIEditor /></ProtectedRoute>} />
+            {/* Public site routes */}
+            <Route path="/sites/:subdomain" element={<PublicSite />} />
+            <Route path="/sites/:subdomain/*" element={<PublicSite />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
