@@ -4,12 +4,12 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import CodeEditor from '@/components/CodeEditor';
 import { 
-  Globe, ArrowLeft, Plus, File, Folder, Trash2, Edit, Save, 
+  Globe, ArrowLeft, Plus, File, Folder, Trash2, Save, 
   ExternalLink, Github, Sparkles, Loader2, FileCode, FileText,
-  Image, MoreVertical, Upload, X, Check, Eye, Code, Columns
+  MoreVertical, X, Eye, Code, Columns, FolderPlus, ChevronRight, ChevronDown
 } from 'lucide-react';
 import {
   Dialog,
@@ -23,11 +23,19 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import {
   ToggleGroup,
   ToggleGroupItem,
 } from '@/components/ui/toggle-group';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { toast } from 'sonner';
 
 interface Site {
@@ -37,6 +45,7 @@ interface Site {
   description: string | null;
   github_url: string | null;
   is_published: boolean;
+  user_id: string;
 }
 
 interface SiteFile {
@@ -49,6 +58,13 @@ interface SiteFile {
   created_at: string;
 }
 
+interface FolderNode {
+  name: string;
+  path: string;
+  children: (FolderNode | SiteFile)[];
+  isFolder: true;
+}
+
 export default function SiteManager() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -57,16 +73,20 @@ export default function SiteManager() {
   const [files, setFiles] = useState<SiteFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNewFile, setShowNewFile] = useState(false);
+  const [showNewFolder, setShowNewFolder] = useState(false);
   const [showGithub, setShowGithub] = useState(false);
   const [newFileName, setNewFileName] = useState('');
+  const [newFileType, setNewFileType] = useState<'html' | 'css' | 'js'>('html');
+  const [newFolderName, setNewFolderName] = useState('');
+  const [currentFolder, setCurrentFolder] = useState('/');
   const [githubUrl, setGithubUrl] = useState('');
   const [importing, setImporting] = useState(false);
   const [selectedFile, setSelectedFile] = useState<SiteFile | null>(null);
   const [editingContent, setEditingContent] = useState('');
   const [saving, setSaving] = useState(false);
-  const [editingSite, setEditingSite] = useState(false);
-  const [siteSettings, setSiteSettings] = useState({ name: '', description: '' });
   const [viewMode, setViewMode] = useState<'code' | 'preview' | 'split'>('split');
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['/']));
+  const [isOwner, setIsOwner] = useState(false);
 
   // Debounced preview content for performance
   const [previewContent, setPreviewContent] = useState('');
@@ -81,6 +101,69 @@ export default function SiteManager() {
   // Generate preview HTML with proper base styling
   const previewHtml = useMemo(() => {
     if (!previewContent) return '';
+    if (!selectedFile) return '';
+    
+    // For CSS files, show in a styled preview
+    if (selectedFile.file_type === 'css') {
+      return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>${previewContent}</style>
+</head>
+<body>
+  <div style="padding: 20px; font-family: system-ui;">
+    <h1>CSS Preview</h1>
+    <p>This is a sample paragraph to preview your styles.</p>
+    <button>Sample Button</button>
+    <a href="#">Sample Link</a>
+    <div class="container">
+      <div class="box">Box 1</div>
+      <div class="box">Box 2</div>
+      <div class="box">Box 3</div>
+    </div>
+  </div>
+</body>
+</html>`;
+    }
+    
+    // For JS files, show in a console-like preview
+    if (selectedFile.file_type === 'js' || selectedFile.file_type === 'javascript') {
+      return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body { font-family: monospace; padding: 20px; background: #1a1a1a; color: #fff; }
+    #output { white-space: pre-wrap; }
+    .log { color: #0ff; }
+    .error { color: #f55; }
+  </style>
+</head>
+<body>
+  <h3>JavaScript Console Output:</h3>
+  <div id="output"></div>
+  <script>
+    const output = document.getElementById('output');
+    const originalLog = console.log;
+    const originalError = console.error;
+    console.log = (...args) => {
+      output.innerHTML += '<div class="log">' + args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : a).join(' ') + '</div>';
+      originalLog(...args);
+    };
+    console.error = (...args) => {
+      output.innerHTML += '<div class="error">' + args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : a).join(' ') + '</div>';
+      originalError(...args);
+    };
+    try {
+      ${previewContent}
+    } catch(e) {
+      console.error('Error:', e.message);
+    }
+  </script>
+</body>
+</html>`;
+    }
     
     // If it's already a full HTML document, use it as-is
     if (previewContent.toLowerCase().includes('<!doctype') || previewContent.toLowerCase().includes('<html')) {
@@ -101,7 +184,7 @@ export default function SiteManager() {
 ${previewContent}
 </body>
 </html>`;
-  }, [previewContent]);
+  }, [previewContent, selectedFile?.file_type]);
 
   useEffect(() => {
     fetchSite();
@@ -121,7 +204,7 @@ ${previewContent}
       return;
     }
     setSite(data);
-    setSiteSettings({ name: data.name, description: data.description || '' });
+    setIsOwner(data.user_id === user?.id);
   };
 
   const fetchFiles = async () => {
@@ -129,7 +212,7 @@ ${previewContent}
       .from('files')
       .select('*')
       .eq('site_id', id)
-      .order('name');
+      .order('path');
     
     if (error) {
       toast.error('Failed to load files');
@@ -139,26 +222,78 @@ ${previewContent}
     setLoading(false);
   };
 
+  // Build folder tree structure
+  const fileTree = useMemo(() => {
+    const root: FolderNode = { name: '/', path: '/', children: [], isFolder: true };
+    const folderMap = new Map<string, FolderNode>();
+    folderMap.set('/', root);
+
+    // Extract unique folders from file paths
+    const folders = new Set<string>();
+    files.forEach(file => {
+      const parts = file.path.split('/').filter(Boolean);
+      let currentPath = '';
+      for (let i = 0; i < parts.length - 1; i++) {
+        currentPath += '/' + parts[i];
+        folders.add(currentPath);
+      }
+    });
+
+    // Create folder nodes
+    Array.from(folders).sort().forEach(folderPath => {
+      const parts = folderPath.split('/').filter(Boolean);
+      const name = parts[parts.length - 1];
+      const parentPath = '/' + parts.slice(0, -1).join('/') || '/';
+      
+      const folderNode: FolderNode = { name, path: folderPath, children: [], isFolder: true };
+      folderMap.set(folderPath, folderNode);
+      
+      const parent = folderMap.get(parentPath === '/' ? '/' : parentPath);
+      if (parent) {
+        parent.children.push(folderNode);
+      }
+    });
+
+    // Add files to their parent folders
+    files.forEach(file => {
+      const parts = file.path.split('/').filter(Boolean);
+      const parentPath = parts.length > 1 ? '/' + parts.slice(0, -1).join('/') : '/';
+      const parent = folderMap.get(parentPath);
+      if (parent) {
+        parent.children.push(file);
+      }
+    });
+
+    return root;
+  }, [files]);
+
+  const getFileExtension = (type: string): string => {
+    switch (type) {
+      case 'html': return '.html';
+      case 'css': return '.css';
+      case 'js': return '.js';
+      case 'javascript': return '.js';
+      default: return '.html';
+    }
+  };
+
   const createFile = async () => {
     if (!newFileName.trim()) {
       toast.error('Please enter a file name');
       return;
     }
 
-    const fileName = newFileName.endsWith('.html') ? newFileName : `${newFileName}.html`;
+    const ext = getFileExtension(newFileType);
+    const fileName = newFileName.endsWith(ext) ? newFileName : `${newFileName}${ext}`;
+    const filePath = currentFolder === '/' ? `/${fileName}` : `${currentFolder}/${fileName}`;
     
-    const { data, error } = await supabase
-      .from('files')
-      .insert({
-        site_id: id,
-        name: fileName,
-        path: `/${fileName}`,
-        content: `<!DOCTYPE html>
+    const defaultContent = {
+      html: `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${fileName.replace('.html', '')}</title>
+    <title>${fileName.replace(ext, '')}</title>
     <style>
         body {
             font-family: system-ui, sans-serif;
@@ -174,8 +309,61 @@ ${previewContent}
     <p>Start editing this file!</p>
 </body>
 </html>`,
-        file_type: 'html',
-        size_bytes: 0,
+      css: `/* ${fileName} */
+
+body {
+    font-family: system-ui, -apple-system, sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #0a0a0b;
+    color: #ffffff;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+h1, h2, h3 {
+    font-weight: 600;
+}
+
+a {
+    color: #00d4ff;
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+`,
+      js: `// ${fileName}
+
+// Your JavaScript code here
+console.log('Hello from ${fileName}!');
+
+// Example function
+function greet(name) {
+    return \`Hello, \${name}!\`;
+}
+
+// Example event listener
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('DOM loaded');
+});
+`,
+    };
+    
+    const { data, error } = await supabase
+      .from('files')
+      .insert({
+        site_id: id,
+        name: fileName,
+        path: filePath,
+        content: defaultContent[newFileType],
+        file_type: newFileType,
+        size_bytes: new Blob([defaultContent[newFileType]]).size,
       })
       .select()
       .single();
@@ -189,8 +377,56 @@ ${previewContent}
     setFiles([...files, data]);
     setShowNewFile(false);
     setNewFileName('');
+    setNewFileType('html');
     setSelectedFile(data);
     setEditingContent(data.content || '');
+  };
+
+  const createFolder = async () => {
+    if (!newFolderName.trim()) {
+      toast.error('Please enter a folder name');
+      return;
+    }
+
+    // Folders are virtual - we just create a placeholder file
+    const folderPath = currentFolder === '/' 
+      ? `/${newFolderName}` 
+      : `${currentFolder}/${newFolderName}`;
+    
+    // Create an index.html in the new folder
+    const { data, error } = await supabase
+      .from('files')
+      .insert({
+        site_id: id,
+        name: 'index.html',
+        path: `${folderPath}/index.html`,
+        content: `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${newFolderName}</title>
+</head>
+<body>
+    <h1>${newFolderName}</h1>
+</body>
+</html>`,
+        file_type: 'html',
+        size_bytes: 0,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      toast.error('Failed to create folder');
+      return;
+    }
+
+    toast.success('Folder created');
+    setFiles([...files, data]);
+    setShowNewFolder(false);
+    setNewFolderName('');
+    setExpandedFolders(new Set([...expandedFolders, folderPath]));
   };
 
   const saveFile = async () => {
@@ -228,6 +464,18 @@ ${previewContent}
     toast.success('File deleted');
   };
 
+  const deleteFolder = async (folderPath: string) => {
+    // Delete all files in this folder
+    const folderFiles = files.filter(f => f.path.startsWith(folderPath + '/'));
+    
+    for (const file of folderFiles) {
+      await supabase.from('files').delete().eq('id', file.id);
+    }
+    
+    setFiles(files.filter(f => !f.path.startsWith(folderPath + '/')));
+    toast.success('Folder deleted');
+  };
+
   const togglePublish = async () => {
     if (!site) return;
     const { error } = await supabase
@@ -243,22 +491,6 @@ ${previewContent}
     toast.success(site.is_published ? 'Site unpublished' : 'Site published!');
   };
 
-  const saveSiteSettings = async () => {
-    if (!site) return;
-    const { error } = await supabase
-      .from('sites')
-      .update({ name: siteSettings.name, description: siteSettings.description || null })
-      .eq('id', site.id);
-
-    if (error) {
-      toast.error('Failed to save settings');
-      return;
-    }
-    setSite({ ...site, ...siteSettings });
-    setEditingSite(false);
-    toast.success('Settings saved');
-  };
-
   const importFromGithub = async () => {
     if (!githubUrl.trim()) {
       toast.error('Please enter a GitHub URL');
@@ -266,8 +498,6 @@ ${previewContent}
     }
 
     setImporting(true);
-    // For now, we'll just store the GitHub URL
-    // In a full implementation, you'd fetch files from the GitHub API
     const { error } = await supabase
       .from('sites')
       .update({ github_url: githubUrl })
@@ -288,9 +518,138 @@ ${previewContent}
     switch (type) {
       case 'html': return <FileCode className="w-4 h-4 text-orange-400" />;
       case 'css': return <FileCode className="w-4 h-4 text-blue-400" />;
-      case 'js': return <FileCode className="w-4 h-4 text-yellow-400" />;
+      case 'js': 
+      case 'javascript': return <FileCode className="w-4 h-4 text-yellow-400" />;
       default: return <FileText className="w-4 h-4 text-muted-foreground" />;
     }
+  };
+
+  const toggleFolder = (path: string) => {
+    const newExpanded = new Set(expandedFolders);
+    if (newExpanded.has(path)) {
+      newExpanded.delete(path);
+    } else {
+      newExpanded.add(path);
+    }
+    setExpandedFolders(newExpanded);
+  };
+
+  const renderFileTree = (node: FolderNode | SiteFile, depth = 0): JSX.Element[] => {
+    const items: JSX.Element[] = [];
+    
+    if ('isFolder' in node && node.isFolder) {
+      const isExpanded = expandedFolders.has(node.path);
+      const isRoot = node.path === '/';
+      
+      if (!isRoot) {
+        items.push(
+          <div
+            key={`folder-${node.path}`}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer hover:bg-secondary group"
+            style={{ paddingLeft: `${depth * 16 + 12}px` }}
+            onClick={() => toggleFolder(node.path)}
+          >
+            {isExpanded ? (
+              <ChevronDown className="w-4 h-4 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="w-4 h-4 text-muted-foreground" />
+            )}
+            <Folder className="w-4 h-4 text-primary" />
+            <span className="flex-1 truncate text-sm">{node.name}</span>
+            {isOwner && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <MoreVertical className="w-3 h-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => {
+                    setCurrentFolder(node.path);
+                    setShowNewFile(true);
+                  }}>
+                    <Plus className="w-4 h-4 mr-2" />
+                    New File
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem 
+                    className="text-destructive"
+                    onClick={() => deleteFolder(node.path)}
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Delete Folder
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
+        );
+      }
+      
+      if (isExpanded || isRoot) {
+        // Sort children: folders first, then files
+        const sortedChildren = [...node.children].sort((a, b) => {
+          const aIsFolder = 'isFolder' in a;
+          const bIsFolder = 'isFolder' in b;
+          if (aIsFolder && !bIsFolder) return -1;
+          if (!aIsFolder && bIsFolder) return 1;
+          return ('name' in a ? a.name : '') .localeCompare('name' in b ? b.name : '');
+        });
+        
+        sortedChildren.forEach(child => {
+          items.push(...renderFileTree(child, isRoot ? depth : depth + 1));
+        });
+      }
+    } else {
+      // It's a file
+      const file = node as SiteFile;
+      items.push(
+        <div
+          key={file.id}
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer group transition-colors ${
+            selectedFile?.id === file.id ? 'bg-primary/10 text-primary' : 'hover:bg-secondary'
+          }`}
+          style={{ paddingLeft: `${depth * 16 + 12}px` }}
+          onClick={() => {
+            setSelectedFile(file);
+            setEditingContent(file.content || '');
+          }}
+        >
+          {getFileIcon(file.file_type)}
+          <span className="flex-1 truncate text-sm">{file.name}</span>
+          {isOwner && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <MoreVertical className="w-3 h-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem 
+                  className="text-destructive"
+                  onClick={() => deleteFile(file.id)}
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+      );
+    }
+    
+    return items;
   };
 
   if (loading || !site) {
@@ -312,11 +671,31 @@ ${previewContent}
             </Link>
             <div>
               <h1 className="font-semibold">{site.name}</h1>
-              <p className="text-xs text-muted-foreground font-mono">htmlhoster.lovable.app/{site.subdomain}</p>
+              <p className="text-xs text-muted-foreground font-mono">
+                {site.is_published && (
+                  <a 
+                    href={`/sites/${site.subdomain}`} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="hover:text-primary"
+                  >
+                    htmlhoster.lovable.app/sites/{site.subdomain}
+                  </a>
+                )}
+                {!site.is_published && `htmlhoster.lovable.app/sites/${site.subdomain}`}
+              </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
+            {site.is_published && (
+              <Button variant="outline" size="sm" asChild>
+                <a href={`/sites/${site.subdomain}`} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="w-4 h-4" />
+                  <span className="hidden sm:inline">View Site</span>
+                </a>
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={() => setShowGithub(true)}>
               <Github className="w-4 h-4" />
               <span className="hidden sm:inline">GitHub</span>
@@ -327,13 +706,15 @@ ${previewContent}
                 <span className="hidden sm:inline">AI Builder</span>
               </Link>
             </Button>
-            <Button 
-              variant={site.is_published ? 'outline' : 'default'}
-              size="sm" 
-              onClick={togglePublish}
-            >
-              {site.is_published ? 'Unpublish' : 'Publish'}
-            </Button>
+            {isOwner && (
+              <Button 
+                variant={site.is_published ? 'outline' : 'default'}
+                size="sm" 
+                onClick={togglePublish}
+              >
+                {site.is_published ? 'Unpublish' : 'Publish'}
+              </Button>
+            )}
           </div>
         </div>
       </header>
@@ -342,12 +723,17 @@ ${previewContent}
       <div className="flex-1 flex">
         {/* Sidebar - File list */}
         <aside className="w-64 border-r border-border/50 bg-card/30 flex flex-col">
-          <div className="p-4 border-b border-border/50">
-            <Button onClick={() => setShowNewFile(true)} size="sm" className="w-full">
-              <Plus className="w-4 h-4" />
-              New File
-            </Button>
-          </div>
+          {isOwner && (
+            <div className="p-4 border-b border-border/50 flex gap-2">
+              <Button onClick={() => { setCurrentFolder('/'); setShowNewFile(true); }} size="sm" className="flex-1">
+                <Plus className="w-4 h-4" />
+                File
+              </Button>
+              <Button onClick={() => { setCurrentFolder('/'); setShowNewFolder(true); }} size="sm" variant="outline">
+                <FolderPlus className="w-4 h-4" />
+              </Button>
+            </div>
+          )}
           
           <div className="flex-1 overflow-auto p-2">
             {files.length === 0 ? (
@@ -356,42 +742,7 @@ ${previewContent}
               </div>
             ) : (
               <div className="space-y-1">
-                {files.map(file => (
-                  <div
-                    key={file.id}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer group transition-colors ${
-                      selectedFile?.id === file.id ? 'bg-primary/10 text-primary' : 'hover:bg-secondary'
-                    }`}
-                    onClick={() => {
-                      setSelectedFile(file);
-                      setEditingContent(file.content || '');
-                    }}
-                  >
-                    {getFileIcon(file.file_type)}
-                    <span className="flex-1 truncate text-sm">{file.name}</span>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          className="h-6 w-6 opacity-0 group-hover:opacity-100"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <MoreVertical className="w-3 h-3" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem 
-                          className="text-destructive"
-                          onClick={() => deleteFile(file.id)}
-                        >
-                          <Trash2 className="w-4 h-4 mr-2" />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                ))}
+                {renderFileTree(fileTree)}
               </div>
             )}
           </div>
@@ -404,7 +755,7 @@ ${previewContent}
               <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 bg-card/30">
                 <div className="flex items-center gap-2">
                   {getFileIcon(selectedFile.file_type)}
-                  <span className="font-mono text-sm">{selectedFile.name}</span>
+                  <span className="font-mono text-sm">{selectedFile.path}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <ToggleGroup type="single" value={viewMode} onValueChange={(v) => v && setViewMode(v as typeof viewMode)}>
@@ -418,21 +769,23 @@ ${previewContent}
                       <Eye className="w-4 h-4" />
                     </ToggleGroupItem>
                   </ToggleGroup>
-                  <Button onClick={saveFile} disabled={saving} size="sm">
-                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                    Save
-                  </Button>
+                  {isOwner && (
+                    <Button onClick={saveFile} disabled={saving} size="sm">
+                      {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                      Save
+                    </Button>
+                  )}
                 </div>
               </div>
               <div className="flex-1 flex min-h-0">
                 {/* Code Editor */}
                 {(viewMode === 'code' || viewMode === 'split') && (
                   <div className={`flex-1 relative ${viewMode === 'split' ? 'border-r border-border/50' : ''}`}>
-                    <Textarea
+                    <CodeEditor
                       value={editingContent}
-                      onChange={(e) => setEditingContent(e.target.value)}
-                      className="absolute inset-0 resize-none rounded-none border-0 code-editor bg-background font-mono text-sm p-4 focus-visible:ring-0"
-                      placeholder="Start typing your code..."
+                      onChange={setEditingContent}
+                      language={selectedFile.file_type as 'html' | 'css' | 'js' | 'text'}
+                      readOnly={!isOwner}
                     />
                   </div>
                 )}
@@ -474,13 +827,28 @@ ${previewContent}
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Create New File</DialogTitle>
-            <DialogDescription>Enter a name for your new file</DialogDescription>
+            <DialogDescription>
+              Create a new file in {currentFolder === '/' ? 'root' : currentFolder}
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 pt-4">
             <div className="space-y-2">
+              <Label>File Type</Label>
+              <Select value={newFileType} onValueChange={(v) => setNewFileType(v as typeof newFileType)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="html">HTML</SelectItem>
+                  <SelectItem value="css">CSS</SelectItem>
+                  <SelectItem value="js">JavaScript</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
               <Label>File Name</Label>
               <Input
-                placeholder="index.html"
+                placeholder={newFileType === 'html' ? 'index.html' : newFileType === 'css' ? 'styles.css' : 'script.js'}
                 value={newFileName}
                 onChange={(e) => setNewFileName(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && createFile()}
@@ -492,6 +860,37 @@ ${previewContent}
               </Button>
               <Button onClick={createFile} className="flex-1">
                 Create File
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* New folder dialog */}
+      <Dialog open={showNewFolder} onOpenChange={setShowNewFolder}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create New Folder</DialogTitle>
+            <DialogDescription>
+              Create a new folder in {currentFolder === '/' ? 'root' : currentFolder}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 pt-4">
+            <div className="space-y-2">
+              <Label>Folder Name</Label>
+              <Input
+                placeholder="components"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && createFolder()}
+              />
+            </div>
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={() => setShowNewFolder(false)} className="flex-1">
+                Cancel
+              </Button>
+              <Button onClick={createFolder} className="flex-1">
+                Create Folder
               </Button>
             </div>
           </div>
